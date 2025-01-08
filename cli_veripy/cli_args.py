@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from cli_veripy.argument import CLIArgument
 
 class CLIError(Exception):
     def __init__(self, cli_arguments:CLIArguments, message:str, *args:list):
@@ -26,7 +27,9 @@ class CLIArguments:
     pargs_names:list[None|str]|None = None,
     minimum_pargs:int = -1,
     exit_on_invalid:bool = False,
-    description:str = ""
+    description:str = "",
+    help_menu:bool = False,
+    help_prefix:str = "help:"
     ):
         try:
             self.required_kwargs:list[str]|None = required_kwargs if required_kwargs else []
@@ -41,7 +44,14 @@ class CLIArguments:
             self.kwargs:dict[str, CLIArgumentTypes] = {k:None for k in self.valid_kwargs.keys()}
             self.pargs:list[CLIArgumentTypes] = []
             self.flags:set[str] = set()
-            
+
+            if help_menu and len(self.raw_arguments) and (self.raw_arguments[0].startswith(help_prefix)):
+                print(f"""
+{self.help(self.raw_arguments[0].removeprefix(help_prefix))}
+{self.usage_string}
+""")
+                exit(0)
+
             current_kw:str|None = None
             for arg in self.raw_arguments:
                 if not arg.startswith("--") and arg.startswith("-"):
@@ -52,6 +62,8 @@ class CLIArguments:
                     else:
                         raise CLIError(self, f"Invalid flag provided '{cleaned_arg}'.", cleaned_arg)
                 elif arg.startswith("--"):
+                    if current_kw and self.kwargs[current_kw] is None:
+                        raise CLIError(self, f"Keyword argument '{current_kw}' was not provided with a value.", current_kw)
                     cleaned_arg = arg.removeprefix("--")
                     if cleaned_arg in self.valid_kwargs:
                         current_kw = cleaned_arg
@@ -69,6 +81,9 @@ class CLIArguments:
                 else:
                     raise CLIError(self, f"Unexpected argument '{arg}' provided without keyword.", arg)
                 
+            if current_kw and self.kwargs[current_kw] is None:
+                raise CLIError(self, f"Keyword argument '{current_kw}' was not provided with a value.", current_kw)
+        
             pargs_num = (len(self.valid_pargs) if self.minimum_pargs == -1 else self.minimum_pargs)
             if len(self.pargs) < pargs_num:
                 raise CLIError(self, f"Expected {pargs_num} positional arguments recieved {len(self.pargs)} positional arguments.", len(self.valid_pargs) if self.minimum_pargs == -1 else self.minimum_pargs, len(self.pargs))
@@ -90,7 +105,7 @@ class CLIArguments:
                 raise e
             
     def validate_type(self, typ:type, argument:str, argument_key:str|None = None):
-        if typ.__name__ in {"Path", "ExistingPath"}:
+        if hasattr(typ,"__name__") and typ.__name__ in {"Path", "ExistingPath"}:
             try:
                 if ((path:=ExistingPath(argument)).exists() if typ.__name__ == "ExistingPath" else (path:=Path(argument))):
                     return path
@@ -100,14 +115,17 @@ class CLIArguments:
                 raise TypeError(f"Argument {argument_key if argument_key else '\b'} must be a valid Path type such as str. {argument} is not a valid Path type.", argument_key, argument)
 
         try:
-            return typ(argument)
+            if isinstance(typ, CLIArgument):
+                return typ(argument_key, argument)
+            else:
+                return typ(argument)
         except (ValueError, TypeError) as e:
-            raise TypeError(f"Failed to convert '{argument}' to a {typ.__name__}.\n\n    Reason: {e.args[0]}", argument, typ)
+            raise TypeError(f"Failed to convert '{argument}' to a {typ.type_name if isinstance(typ, CLIArgument) else typ.__name__}.\n\n    Reason: {e.args[0]}", argument, typ)
 
         
     def validate_type_init(self, collection, argument_key:str|int, argument:str) -> CLIArgumentTypes:
         try:
-            typ:type = collection[argument_key]
+            typ:type|CLIArgument = collection[argument_key]
         except IndexError:
             raise CLIError(self, f"The program expects {len(collection)} arguments, {argument_key+1} were provided.", len(collection), argument_key+1, argument)
         try:
@@ -115,6 +133,45 @@ class CLIArguments:
         except TypeError as e:
             raise CLIError(self, e.args[0], *e.args[1::])
         
+    def get_flag_data(self, flag:str) -> bool|CLIArgument|None:
+        for item in self.valid_flags:
+            if hash(item) == hash(flag):
+                return item
+        return None
+        
+    def help(self, key:str|int):
+        term_size = os.get_terminal_size()
+        arg_type:str|None = None
+        arg_prefix:str|None = None
+        if isinstance(key, int):
+            cli_arg = self.valid_pargs[key]
+            arg_type = "Positional Argument"
+        elif key in self.valid_flags:
+            cli_arg = self.get_flag_data(key)
+            arg_type = "Flag"
+            arg_prefix = '-'
+        elif key in self.pargs_names:
+            cli_arg = self.valid_pargs[self.pargs_names.index(key)]
+            arg_type = "Positional Argument"
+        elif key in self.valid_kwargs:
+            cli_arg = self.valid_kwargs[key]
+            arg_type = "Keyword Argument"
+            arg_prefix = '--'
+        else:
+            raise CLIError(self, f"Argument '{key}' is not a valid command line argument.", key)
+        
+        if isinstance(cli_arg, CLIArgument):
+            return f"""        {arg_prefix if arg_prefix else ""}{key}{f" ( {arg_type} ) " if arg_type else ""}:
+
+ - Type: {cli_arg.type_name}
+{f"\n{cli_arg.full_description}\n" if cli_arg.full_description != "" else ""}
+{'_' * (term_size.columns-1)}"""
+        else:
+            return f"""        {arg_prefix if arg_prefix else ""}{key}{f" ( {arg_type} ) " if arg_type else ""}:
+             
+ - Type: {cli_arg.__class__.__name__}
+
+ {'_' * (term_size.columns-1)}"""
 
     @property
     def usage_string(self) -> str:
@@ -144,9 +201,16 @@ class CLIArguments:
         if len(self.valid_kwargs):
             kwarg_str = ""
             kwarg_line = "    "
-            padding_size = max(len(f'--{key}({required if key in self.required_kwargs else empty_str}{typ.__name__})') for key, typ in sorted(self.valid_kwargs.items(), key=lambda pair:pair[0] in self.required_kwargs, reverse=True)) + 2
+            padding_size = max(
+                len(f'--{key}({required if key in self.required_kwargs else empty_str}{typ.type_name if isinstance(typ, CLIArgument) else typ.__name__})')
+                    for key, typ in sorted(
+                        self.valid_kwargs.items(),
+                        key=lambda pair:pair[0] in self.required_kwargs,
+                        reverse=True
+                    )
+            ) + 2
             for key, typ in sorted(self.valid_kwargs.items(), key=lambda pair:pair[0] in self.required_kwargs, reverse=True):
-                kwarg = f'--{key}({required if key in self.required_kwargs else empty_str}{typ.__name__})'
+                kwarg = f'--{key}({required if key in self.required_kwargs else empty_str}{typ.type_name if isinstance(typ, CLIArgument) else typ.__name__})'
                 if len(kwarg_line + f"{kwarg: <{padding_size}}") < term_size.columns:
                     kwarg_line += f"{kwarg: <{padding_size}}"
                 else:
@@ -160,9 +224,9 @@ class CLIArguments:
         parg_str = ""
         for i, v in enumerate(self.valid_pargs):
             if i < len(self.pargs_names) and self.pargs_names[i] is not None:
-                p_name = f'  ({self.pargs_names[i]}({required if i < self.minimum_pargs else empty_str}{v.__name__}))'
+                p_name = f'  ({self.pargs_names[i]}({required if i < self.minimum_pargs else empty_str}{v.type_name if isinstance(v, CLIArgument) else v.__name__}))'
             else:
-                p_name = f'  (arg{i}({required if i < self.minimum_pargs else empty_str}{v.__name__}))'
+                p_name = f'  (arg{i}({required if i < self.minimum_pargs else empty_str}{v.type_name if isinstance(v, CLIArgument) else v.__name__}))'
 
             parg_str += p_name
 
