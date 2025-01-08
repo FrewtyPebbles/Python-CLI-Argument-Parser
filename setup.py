@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="cli_veripy",  # Replace with your package name
-    version="1.1.9",
+    version="1.2.9",
     description="A CLI Arguments verifier.",
     long_description=open("README.md").read(),  # Optional: Read from README.md
     long_description_content_type="text/markdown",  # Markdown format

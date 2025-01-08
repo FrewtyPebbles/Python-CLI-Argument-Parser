@@ -1,8 +1,10 @@
-from typing import Callable
+from typing import Callable, TypeVar, Generic
 
+from cli_veripy.type_validation import validate_type
 
-class CLIArgument:
-    def __init__(self, type_name:str, _type:type = bool,
+T = TypeVar("T")
+class CLIArgument(Generic[T]):
+    def __init__(self, type_name:str, _type:type[T] = bool,
     description:str|None = None, long_description:str|None = None,
     validation_function:Callable[[str], bool] = lambda a:True,
     fail_validation_callback_msg:Callable[[str|int, str, str], str] = 
@@ -24,11 +26,8 @@ class CLIArgument:
     def __eq__(self, value):
         return self.type_name == value
     
-    def __call__(self, key:str|int, arg:str):
-        if self.validation_function(arg):
-            return self.type(arg)
-        else:
-            raise ValueError(self.fail_validation_callback_msg(key, arg, self.type_name))
+    def __call__(self, key:str|int, arg:str) -> T:
+        return validate_type(self, arg, key)
         
     @property
     def __doc__(self):

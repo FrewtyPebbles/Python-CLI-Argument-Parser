@@ -3,6 +3,8 @@ import os
 import sys
 from pathlib import Path
 from cli_veripy.argument import CLIArgument
+from cli_veripy.type_validation import ExistingPath, validate_type, datetime_ext, date_ext
+from datetime import datetime, date
 
 class CLIError(Exception):
     def __init__(self, cli_arguments:CLIArguments, message:str, *args:list):
@@ -11,10 +13,7 @@ class CLIError(Exception):
         self.cli_arguments:CLIArguments = cli_arguments
         super().__init__(self.message)
 
-class ExistingPath(Path):
-    pass
-
-CLIArgumentTypes = float|int|str|bool|Path|ExistingPath
+CLIArgumentTypes = float|int|str|bool|Path|ExistingPath|datetime|date
 
 class CLIArguments:
     program_path:Path = Path(sys.argv[0])
@@ -103,33 +102,15 @@ class CLIArguments:
                 exit(1)
             else:
                 raise e
-            
-    def validate_type(self, typ:type, argument:str, argument_key:str|None = None):
-        if hasattr(typ,"__name__") and typ.__name__ in {"Path", "ExistingPath"}:
-            try:
-                if ((path:=ExistingPath(argument)).exists() if typ.__name__ == "ExistingPath" else (path:=Path(argument))):
-                    return path
-                else:
-                    raise TypeError(f"Argument {argument_key if argument_key else '\b'} requires an existing file system path. The file path {argument!r} could not be found.")
-            except TypeError:
-                raise TypeError(f"Argument {argument_key if argument_key else '\b'} must be a valid Path type such as str. {argument} is not a valid Path type.", argument_key, argument)
-
-        try:
-            if isinstance(typ, CLIArgument):
-                return typ(argument_key, argument)
-            else:
-                return typ(argument)
-        except (ValueError, TypeError) as e:
-            raise TypeError(f"Failed to convert '{argument}' to a {typ.type_name if isinstance(typ, CLIArgument) else typ.__name__}.\n\n    Reason: {e.args[0]}", argument, typ)
 
         
-    def validate_type_init(self, collection, argument_key:str|int, argument:str) -> CLIArgumentTypes:
+    def validate_type_init(self, collection, key:str|int, argument:str) -> CLIArgumentTypes:
         try:
-            typ:type|CLIArgument = collection[argument_key]
+            _type:type|CLIArgument = collection[key]
         except IndexError:
-            raise CLIError(self, f"The program expects {len(collection)} arguments, {argument_key+1} were provided.", len(collection), argument_key+1, argument)
+            raise CLIError(self, f"The program expects {len(collection)} arguments, {key+1} were provided.", len(collection), key+1, argument)
         try:
-            return self.validate_type(typ, argument, argument_key)
+            return validate_type(_type, argument, key)
         except TypeError as e:
             raise CLIError(self, e.args[0], *e.args[1::])
         
@@ -278,14 +259,14 @@ class CLIArguments:
         if isinstance(key, str):
             if key in self.pargs_names:
                 parg_index = self.pargs_names.index(key)
-                self.pargs[parg_index] = self.validate_type(self.valid_pargs[parg_index], value, key)
+                self.pargs[parg_index] = validate_type(self.valid_pargs[parg_index], value, key)
             elif key in self.valid_flags:
-                if self.validate_type(bool, value, key):
+                if validate_type(bool, value, key):
                     self.flags.add(key)
                 else:
                     self.flags.remove(key)
             elif key in self.kwargs:
-                self.kwargs[key] = self.validate_type(self.valid_kwargs[key], value, key)
+                self.kwargs[key] = validate_type(self.valid_kwargs[key], value, key)
             else:
                 raise KeyError(f"'{key}' is not a valid key.", key)
         

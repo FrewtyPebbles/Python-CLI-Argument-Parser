@@ -1,8 +1,10 @@
 from pathlib import Path
-from cli_veripy.cli_args import CLIArguments, ExistingPath, CLIArgument
+from cli_veripy import (
+    CLIArguments, ExistingPath, CLIArgument, datetime_ext, date_ext
+)
 import string
 
-def ListStrFactory(valid_chars:str = string.ascii_letters + '_ ', delimiter:str = ','):
+def ListStrFactory(valid_chars:str = string.ascii_letters + string.digits + '_ ', delimiter:str = ','):
     valid_chars += delimiter
     class ListStr(list):
         def __init__(self, value:str):
@@ -35,13 +37,16 @@ if __name__ == "__main__":
                 description="The starting version string of your package.",
                 long_description=f"""Common versioning tokens such as "development", "alpha", "beta", "release", "test", etc. are valid in the string.  The characters "a-z", "A-Z" and "._- " are also allowed.  This will be the version that appears in your build tools and config files."""
             ),
-            "build-tool":str, "python-version":str,
+            "build-tool":str,
+            "python-version":str,
             "author":str,
             "license":CLIArgument("License", str, validation_function=lambda arg: arg in {"MIT"},
                 description="The Licence under which your package will be distributed."                      
             ),
             "license-year":int,
-            "license-path":ExistingPath, "sub-modules":ListStrFactory()
+            "license-path":ExistingPath,
+            "sub-modules":ListStrFactory(),
+            "time":datetime_ext(range_low="01/07/2025", range_high="01/09/2025", now_str="now")
         },
         required_kwargs=["author"],
         exit_on_invalid=True,
